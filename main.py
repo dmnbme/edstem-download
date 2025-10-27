@@ -9,7 +9,6 @@ from selenium.common.exceptions import NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver import ActionChains
 from urllib.parse import urljoin
-import os
 from pathlib import Path
 import time
 import random
@@ -109,7 +108,14 @@ for download in lessons:
     more_btn.click()
 
     # simulate mouseup event on preview lesson button in the menu
-    menu_item = wait.until(
-    EC.visibility_of_element_located((By.XPATH, "//tr[contains(@class,'root')][.//div[@class='text_if9SO' and normalize-space()='Preview Lesson']]")))
-    ActionChains(driver).move_to_element(menu_item).pause(0.1).click_and_hold().pause(0.1).release().perform()
-    break
+    try:
+        menu_item = wait.until(EC.visibility_of_element_located((By.XPATH, "//tr[contains(@class,'root')][.//div[@class='text_if9SO' and normalize-space()='Preview Lesson']]")))
+    except TimeoutException:
+        print('Unsupported lesson type. Skipping...')
+        continue
+    else:
+        ActionChains(driver).move_to_element(menu_item).pause(0.1).click_and_hold().pause(0.1).release().perform()
+        download_btn = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'navbar-button')]//span[normalize-space()='Download PDF']/..")))
+        download_btn.click()
+        break
