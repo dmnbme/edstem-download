@@ -14,7 +14,7 @@ import time
 import random
 
 def rand_sleep():
-    time.sleep(random.uniform(0, 5))
+    time.sleep(random.uniform(0, 2))
 
 BASE_URL = 'https://edstem.org/'
 LOGIN_URL = 'https://edstem.org/au/login'
@@ -99,23 +99,36 @@ for module in module_sections:
 
 # download each lesson
 for download in lessons:
-    # rand_sleep()
-    driver.get(download['link'])
-    wait = WebDriverWait(driver, 10)
+    download_path = (DOWNLOAD_DIRECTORY / courses[course_dl]['code'] / download['module']).resolve()
+    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+    "behavior": "allow",
+    "downloadPath": str(download_path)
+})
 
+    rand_sleep() # prevent being limited for operating too frequently
+    driver.get(download['link'])
+    wait = WebDriverWait(driver, 5)
+    rand_sleep()
     # click button more for menu
     more_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.navbar-button[aria-haspopup='menu']")))
+    rand_sleep()
     more_btn.click()
-
+    rand_sleep()
     # simulate mouseup event on preview lesson button in the menu
     try:
         menu_item = wait.until(EC.visibility_of_element_located((By.XPATH, "//tr[contains(@class,'root')][.//div[@class='text_if9SO' and normalize-space()='Preview Lesson']]")))
     except TimeoutException:
-        print('Unsupported lesson type. Skipping...')
-        continue
-    else:
-        ActionChains(driver).move_to_element(menu_item).pause(0.1).click_and_hold().pause(0.1).release().perform()
-        download_btn = wait.until(
-        EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'navbar-button')]//span[normalize-space()='Download PDF']/..")))
-        download_btn.click()
-        break
+        try:
+            view_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'actdlg-action')][normalize-space()='View your submissions']")))
+            view_btn.click()
+        except:
+            print(f"{download['title']}: Unsupported lesson type.")
+            continue
+    rand_sleep()
+    ActionChains(driver).move_to_element(menu_item).pause(0.1).click_and_hold().pause(0.1).release().perform()
+    rand_sleep()
+    download_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'navbar-button')]//span[normalize-space()='Download PDF']/..")))
+    rand_sleep()
+    download_btn.click()
+    time.sleep(3)
+    driver.get(LESSON_URL)
