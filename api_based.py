@@ -10,7 +10,6 @@ from typing import Dict, List, Tuple, Any
 import requests
 import pypandoc  # 直接导入
 
-
 ED_HOST = "https://edstem.org/api"
 
 
@@ -28,7 +27,7 @@ def request(
 ) -> requests.Response:
     """
     简单封装 requests.request，带重试。
-    - 对网络异常、5xx（包括 525）等进行最多 `retries` 次重试。
+    - 对网络异常、5xx（包括 525）以及 429 进行最多 `retries` 次重试。
     - 仍失败则抛出异常。
     """
     last_exception: Exception | None = None
@@ -41,7 +40,7 @@ def request(
             resp = requests.request(method, url, **kwargs)
             status = str(resp.status_code)
 
-            # 只在需要打印时才用 text，二进制内容不要随便动
+            # 只在需要打印时才访问 text，避免二进制内容乱掉
             try:
                 body_repr = repr(resp.text)
             except Exception:
@@ -51,7 +50,7 @@ def request(
             if 200 <= resp.status_code <= 299:
                 return resp
 
-            # 5xx（包括 525）/ 429 这类，可以认为是“暂时性问题”，尝试重试
+            # 429 / 5xx 暂时性问题，重试
             if resp.status_code == 429 or 500 <= resp.status_code <= 599:
                 if attempt < retries:
                     print(
@@ -171,7 +170,7 @@ def list_lessons_for_course(
     调 /courses/<course_id>/lessons，
     1. 返回按 lesson id 排序后的 lessons 列表
     2. 同时构造 module_id -> module_name 的映射（来自同一个响应里的 "modules" 字段）
-    3. 如果 lessons 为空，先打印提示。
+    3. 如果 lessons 为空，打印提示并返回空。
     """
     lessons_url = f"{ed_url}/courses/{course_id}/lessons"
     r = request("GET", lessons_url, headers={"Authorization": "Bearer " + token})
@@ -217,7 +216,7 @@ def list_lessons_for_course(
         print(f"  {t}: {count}")
     print()
 
-    # ---- module_id -> module_name 映射 ----
+    # ---- module_id -> module_name 映射（来自同一响应里的 modules）----
     module_name_map: Dict[int, str] = {}
     for m in modules_list:
         mid = m.get("id")
@@ -231,57 +230,79 @@ def list_lessons_for_course(
 def edxml_to_markdown(xml: str) -> str:
     """
     用 pypandoc 把 Ed 的 <document> XML 尽量转成 Markdown。
-    - 做一点 tag 替换，让它更接近 HTML，再交给 pandoc。
-    - <web-snippet> 里的 HTML/CSS/JS 会被还原成真正的内嵌 HTML，而不是代码块。
+    - 先处理 <web-snippet>，把其中的 HTML/CSS/JS 抽出来，变成原始 HTML 片段，用占位符保护。
+    - 再做一些 tag 替换，让它更接近 HTML，再交给 pandoc。
     """
     if not xml:
         return ""
 
-    html_like = xml
+    # ==========
+    # 1. 先处理 web-snippet，抽出里面的 HTML/CSS/JS，做成 raw HTML 块
+    #    用占位符防止 pandoc 把它变成表格 / 标题等。
+    # ==========
 
-    # ===== 1. 先处理 <web-snippet> 中的内容 =====
-    # language="html" -> 直接还原为 HTML
-    def _ws_html(match: re.Match) -> str:
-        content = match.group(1) or ""
-        return html.unescape(content)
+    web_snippet_blocks: Dict[str, str] = {}
 
-    html_like = re.sub(
-        r'<web-snippet-file[^>]*language="html"[^>]*>(.*?)</web-snippet-file>',
-        _ws_html,
-        html_like,
+    def _web_snippet_repl(match: re.Match) -> str:
+        full_block = match.group(0)
+
+        # 找出所有 web-snippet-file
+        files = re.findall(
+            r'<web-snippet-file[^>]*language="([^"]+)"[^>]*>(.*?)</web-snippet-file>',
+            full_block,
+            flags=re.DOTALL,
+        )
+
+        html_code_parts: List[str] = []
+        css_code_parts: List[str] = []
+        js_code_parts: List[str] = []
+
+        for lang, content in files:
+            # content 里面有 &lt; 之类，要还原成真正的 HTML
+            text = html.unescape(content)
+            lang = (lang or "").lower()
+            if lang == "html":
+                html_code_parts.append(text.strip())
+            elif lang == "css":
+                css_code_parts.append(text.strip())
+            elif lang == "js" or lang == "javascript":
+                js_code_parts.append(text.strip())
+
+        raw_html = ""
+
+        if html_code_parts:
+            raw_html += "\n".join(html_code_parts)
+
+        if css_code_parts:
+            css_block = "\n".join(css_code_parts)
+            raw_html += f"\n<style>\n{css_block}\n</style>"
+
+        if js_code_parts:
+            js_block = "\n".join(js_code_parts)
+            raw_html += f"\n<script>\n{js_block}\n</script>"
+
+        if not raw_html:
+            # 实在没东西，就干掉这个 web-snippet
+            return ""
+
+        placeholder = f"EDRAWHTMLBLOCK_{len(web_snippet_blocks)}"
+        web_snippet_blocks[placeholder] = raw_html
+        return placeholder
+
+    xml_processed = re.sub(
+        r"<web-snippet[^>]*>.*?</web-snippet>",
+        _web_snippet_repl,
+        xml,
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-    # language="css" -> 包一层 <style>
-    def _ws_css(match: re.Match) -> str:
-        content = match.group(1) or ""
-        return "<style>\n" + html.unescape(content) + "\n</style>"
+    # ==========
+    # 2. 把 Ed XML 映射成 HTML-ish
+    # ==========
 
-    html_like = re.sub(
-        r'<web-snippet-file[^>]*language="css"[^>]*>(.*?)</web-snippet-file>',
-        _ws_css,
-        html_like,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    html_like = xml_processed
 
-    # language="js" -> 包一层 <script>
-    def _ws_js(match: re.Match) -> str:
-        content = match.group(1) or ""
-        return "<script>\n" + html.unescape(content) + "\n</script>"
-
-    html_like = re.sub(
-        r'<web-snippet-file[^>]*language="js"[^>]*>(.*?)</web-snippet-file>',
-        _ws_js,
-        html_like,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-
-    # 去掉外层 <web-snippet ...> 和 </web-snippet>，只留下里面刚刚替换好的 HTML
-    html_like = re.sub(r"<web-snippet[^>]*>", "", html_like, flags=re.IGNORECASE)
-    html_like = re.sub(r"</web-snippet>", "", html_like, flags=re.IGNORECASE)
-
-    # ===== 2. heading / document / paragraph 等常规 XML -> HTML-ish =====
-
+    # heading level -> h1/h2...
     def _heading_block(match: re.Match) -> str:
         level = int(match.group(1))
         level = min(max(level, 1), 6)
@@ -295,15 +316,16 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
+    # 去掉 document 根标签，替换 paragraph 为 p
     html_like = re.sub(r"</?document[^>]*>", "", html_like)
     html_like = (
         html_like.replace("<paragraph", "<p")
         .replace("</paragraph>", "</p>")
     )
+    # 换行标记
     html_like = html_like.replace("<break>", "<br />").replace("</break>", "")
 
-    # ===== 3. 图片转 base64 data URI（和你原来的一样） =====
-
+    # 图片转 base64 data URI
     def _image_repl(match: re.Match) -> str:
         attrs = match.group(1)
         src_match = re.search(r'src="([^"]+)"', attrs)
@@ -337,8 +359,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # ===== 4. list / 样式标签 / snippet 等，保持你原来的逻辑 =====
-
+    # 列表 <list style="number"> / <list style="bullet">
     def _convert_lists(text: str) -> str:
         tokens = re.finditer(r"</?list(?!-item)[^>]*>", text)
         out_parts: List[str] = []
@@ -346,7 +367,7 @@ def edxml_to_markdown(xml: str) -> str:
         last_idx = 0
 
         for m in tokens:
-            out_parts.append(text[last_idx:m.start()])
+            out_parts.append(text[last_idx: m.start()])
             tag = m.group(0)
             if tag.startswith("</"):
                 list_type = stack.pop() if stack else "ul"
@@ -370,11 +391,13 @@ def edxml_to_markdown(xml: str) -> str:
         .replace("</list-item>", "</li>")
     )
 
+    # 文本样式
     html_like = (
         html_like.replace("<bold>", "<strong>").replace("</bold>", "</strong>")
         .replace("<italic>", "<em>").replace("</italic>", "</em>")
         .replace("<underline>", "<u>").replace("</underline>", "</u>")
     )
+    # <strong>xxx<br /></strong> → <strong>xxx</strong><br />
     html_like = re.sub(
         r"<(strong|em|u)>([^<]*?)<br\s*/>\s*</\1>",
         r"<\1>\2</\1><br />",
@@ -382,6 +405,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
+    # 代码片段 <snippet language="py"> <snippet-file>...</snippet-file> </snippet>
     def _snippet_repl(match: re.Match) -> str:
         lang = match.group(1) or ""
         code = match.group(2) or ""
@@ -389,15 +413,18 @@ def edxml_to_markdown(xml: str) -> str:
         code_html = html.escape(code_raw)
         lang_class = lang.strip()
         class_attr = f' class="language-{lang_class}"' if lang_class else ""
+        # 这里仍然用 <pre><code>，让 pandoc 识别为代码块
         return f"<pre><code{class_attr}>{code_html}</code></pre>"
 
     html_like = re.sub(
-        r'<snippet[^>]*?language="([^"]*)"[^>]*>\s*<snippet-file[^>]*?>(.*?)</snippet-file>\s*</snippet>',
+        r'<snippet[^>]*?language="([^"]*)"[^>]*>\s*'
+        r'<snippet-file[^>]*?>(.*?)</snippet-file>\s*</snippet>',
         _snippet_repl,
         html_like,
         flags=re.DOTALL,
     )
 
+    # 链接
     html_like = re.sub(
         r"<link\s+href=\"([^\"]+)\"\s*>",
         r'<a href="\1">',
@@ -405,7 +432,9 @@ def edxml_to_markdown(xml: str) -> str:
     )
     html_like = html_like.replace("</link>", "</a>")
 
-    # ===== 5. 交给 pandoc 转成 markdown =====
+    # ==========
+    # 3. 调用 pandoc 把 HTML-ish 转成 Markdown
+    # ==========
 
     md = pypandoc.convert_text(
         html_like,
@@ -414,7 +443,7 @@ def edxml_to_markdown(xml: str) -> str:
         extra_args=["--wrap=none"],
     )
 
-    # 图片 markdown 扩展属性 -> 纯 HTML
+    # 将 markdown 图像语法转换为 HTML，去掉 {width=".."} 之类的扩展语法
     def _img_md_to_html(match: re.Match) -> str:
         alt = match.group(1) or ""
         src = match.group(2) or ""
@@ -432,6 +461,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
+    # 清理 pandoc 生成的一些小瑕疵
     cleaned_lines: List[str] = []
     in_code_block = False
     for line in md.splitlines():
@@ -447,11 +477,23 @@ def edxml_to_markdown(xml: str) -> str:
             continue
         line = re.sub(r"^(\s*)(\d+)\.\s+-\s+", r"\1\2. ", line)
         line = re.sub(r"^(\s*)-\s+-\s+", r"\1- ", line)
+        # 去掉粗体/斜体后紧跟的反斜杠（来自 HTML <br />）
+        line = re.sub(r"(\\)(?=\*\*|__)", "", line)
+        # 去掉行尾用于强制换行的反斜杠
         if line.rstrip().endswith("\\"):
             line = re.sub(r"\\\s*$", "", line)
         cleaned_lines.append(line)
 
-    return "\n".join(cleaned_lines).strip()
+    md = "\n".join(cleaned_lines).strip()
+
+    # ==========
+    # 4. 把 web-snippet 的占位符替换回原始 HTML/CSS/JS
+    # ==========
+
+    for placeholder, raw_html in web_snippet_blocks.items():
+        md = md.replace(placeholder, raw_html)
+
+    return md.strip()
 
 
 def fetch_lesson_content(ed_url: str, token: str, lesson: dict) -> dict:
@@ -656,10 +698,10 @@ def export_course_lessons_to_markdown(ed_url: str, token: str) -> None:
 def main() -> None:
     ed_url = ED_HOST
     # 建议从环境变量里读，不要把 PAT 写死在代码里
-    # 例如：token = os.environ["ED_PAT"]
+    token = os.environ.get("ED_PAT", "")
     token = "byVGl_.CG7HsNiPyPDGcxRbc5qX6nP2yIyQNjfGnDZ7ivNh"
-    if not token or token == "YOUR_ED_PAT_HERE":
-        print("Please set your Ed PAT in the 'token' variable or via an environment variable.")
+    if not token:
+        print("Please set your Ed PAT in the ED_PAT environment variable.")
         return
 
     export_course_lessons_to_markdown(ed_url, token)
