@@ -9,7 +9,9 @@ import pypandoc
 
 
 def shift_markdown_headings(md: str, offset: int = 1) -> str:
-    """把 Markdown 里的标题级别整体下移 offset 级。"""
+    """
+    Shift all Markdown heading levels down by `offset` levels.
+    """
 
     def _repl(match: re.Match) -> str:
         hashes = match.group(1)
@@ -79,17 +81,15 @@ def _convert_lists(text: str) -> str:
 
 def edxml_to_markdown(xml: str) -> str:
     """
-    Ed <document> XML → Markdown（带 web-snippet / spoiler / 下划线 / Typora [ 修复）。
-    依赖外部的:
-      - _image_repl
-      - _convert_lists
+    Convert raw XML to Markdown.
+    Depends on external helpers:
+        _image_repl
+        _convert_lists
     """
     if not xml:
         return ""
 
-    # ==========
-    # 1. web-snippet 使用占位符保护
-    # ==========
+    # 1. Protect web-snippet blocks using placeholders
     web_snippet_blocks: Dict[str, str] = {}
 
     def _web_snippet_repl(match: re.Match) -> str:
@@ -131,11 +131,11 @@ def edxml_to_markdown(xml: str) -> str:
         raw_html = raw_html.strip()
         lower_html = raw_html.lower()
 
-        # 如果 snippet 里本来就有 <iframe>，不要再套一层
+        # If the web snippet already contains an <iframe>, do not wrap another iframe
         if "<iframe" in lower_html:
             final_block = f"\n\n{raw_html}\n\n"
         else:
-            # 用 iframe srcdoc 包裹，隔离样式和 JS
+            # Wrap with an iframe srcdoc
             srcdoc_content = raw_html.replace("'", "&#39;").replace("\n", " ")
             srcdoc_content = re.sub(r"\s{2,}", " ", srcdoc_content)
             final_block = (
@@ -156,13 +156,11 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-    # ==========
-    # 2. XML → HTML-ish
-    # ==========
 
+    # 2. raw XML to HTML-ish
     html_like = xml_processed
 
-    # heading level → <h1> / <h2>...
+    # heading level
     def _heading_block(match: re.Match) -> str:
         level = int(match.group(1))
         level = min(max(level, 1), 6)
@@ -176,7 +174,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
-    # 根标签 / 段落 / 换行
+    # root tags / paragraphs / line breaks
     html_like = re.sub(r"</?document[^>]*>", "", html_like)
     html_like = (
         html_like.replace("<paragraph", "<p")
@@ -184,7 +182,7 @@ def edxml_to_markdown(xml: str) -> str:
     )
     html_like = html_like.replace("<break>", "<br />").replace("</break>", "")
 
-    # 图片 <image> → <img src="data:...">
+    # images
     html_like = re.sub(
         r"<image([^>]*)\/?>",
         _image_repl,
@@ -192,14 +190,14 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # 列表 <list> / <list-item>
+    # Lists
     html_like = _convert_lists(html_like)
     html_like = (
         html_like.replace("<list-item", "<li")
         .replace("</list-item>", "</li>")
     )
 
-    # 文本样式：粗体 / 斜体 / 下划线
+    # text styles: bold / italic / underline
     html_like = (
         html_like.replace("<bold>", "<strong>").replace("</bold>", "</strong>")
         .replace("<italic>", "<em>").replace("</italic>", "</em>")
@@ -212,7 +210,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
-    # 代码片段 <snippet>
+    # code snippets
     def _snippet_repl(match: re.Match) -> str:
         lang = match.group(1) or ""
         code = match.group(2) or ""
@@ -230,7 +228,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
-    # 链接 <link href="..."> → <a href="...">
+    # links
     html_like = re.sub(
         r"<link\s+href=\"([^\"]+)\"\s*>",
         r'<a href="\1">',
@@ -238,7 +236,7 @@ def edxml_to_markdown(xml: str) -> str:
     )
     html_like = html_like.replace("</link>", "</a>")
 
-    # spoiler 用占位符保护
+    # Protect spoilers with placeholders
     spoiler_blocks: Dict[str, str] = {}
 
     def _spoiler_repl(match: re.Match) -> str:
@@ -255,10 +253,7 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
 
-    # ==========
-    # 3. pandoc: HTML → Markdown
-    # ==========
-
+    # 3. pandoc: HTML to Markdown
     md = pypandoc.convert_text(
         html_like,
         "md",
@@ -266,7 +261,14 @@ def edxml_to_markdown(xml: str) -> str:
         extra_args=["--wrap=none"],
     )
 
-    # markdown 图片语法 → <img>
+    # fix pandoc autolinks: <url> to url
+    md = re.sub(
+        r"(?<!\()<(https?://[^ >]+)>",
+        r"\1",
+        md,
+    )
+
+    # Markdown image syntax to <img>, preserving image size
     def _img_md_to_html(match: re.Match) -> str:
         alt = match.group(1) or ""
         src = match.group(2) or ""
@@ -284,78 +286,96 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
-    # pandoc 产生的 [text]{.underline} → <u>text</u>
+    # pandoc [text]{.underline} to <u>text</u>
     md = re.sub(
         r"\[([^\]]+)\]\s*\{\.underline\}",
         r"<u>\1</u>",
         md,
     )
 
-    # ==========
-    # 3.5 Typora 数学模式 \[ / \] 修复 + “松散”尖括号处理
-    #   - 删除会触发公式的 \[ / \]（代码块内不处理）
-    #   - 对非 HTML 标签的 <...> 前加反斜杠，避免被当成标签
-    # ==========
+    def _escape_loose_angles(line: str) -> str:
+        # Match <...> that are not in the form of HTML tags
+        pattern = r"<(?!/?[A-Za-z][A-Za-z0-9\-]*(?:\s[^>]*)?>)([^>]*)>"
+        def repl(m: re.Match) -> str:
+            inner = m.group(1)
+            return f"\\<{inner}>"
+        return re.sub(pattern, repl, line)
 
-    # def _escape_loose_angles(line: str) -> str:
-    #     # 匹配非 HTML 标签形式的 <...>
-    #     pattern = r"<(?!/?[A-Za-z][A-Za-z0-9\-]*(?:\s[^>]*)?>)([^>]*)>"
-    #     def repl(m: re.Match) -> str:
-    #         inner = m.group(1)
-    #         return f"\\<{inner}>"
-    #     return re.sub(pattern, repl, line)
-
+    # miscellaneous fix
     cleaned_lines: List[str] = []
     in_code_block = False
 
     for line in md.splitlines():
         stripped = line.strip()
 
-        # 代码块 fence
+        # Code block
         if stripped.startswith("```"):
             cleaned_lines.append(line.rstrip("\n"))
             in_code_block = not in_code_block
             continue
 
         if in_code_block:
-            # 代码块内部完全不动
             cleaned_lines.append(line.rstrip("\n"))
             continue
 
-        # 非代码块行的清理
+        # extra comment lines
         if stripped == "<!-- -->":
             continue
 
-        # 列表小修
+        # Minor fixes for pandoc lists
         line = re.sub(r"^(\s*)(\d+)\.\s+-\s+", r"\1\2. ", line)
         line = re.sub(r"^(\s*)-\s+-\s+", r"\1- ", line)
 
-        # 去掉粗体/斜体前多余反斜杠
+        # Remove extra backslashes before bold/italic markers
         line = re.sub(r"(\\)(?=\*\*|__)", "", line)
-        # 去掉用于强制换行的结尾反斜杠
+        # Remove trailing backslashes used for forced line breaks
         if line.rstrip().endswith("\\"):
             line = re.sub(r"\\\s*$", "", line)
 
-        # Typora 数学触发符号：\[…\]
-        # 这里只去掉反斜杠，不改方括号本身
+        # remove math trigger symbols of non-math lines
+        # Here we only remove the backslash and keep the brackets unchanged
         line = re.sub(r"\\(?=\[)", "", line)
         line = re.sub(r"\\(?=\])", "", line)
 
-        # 处理“松散”的 <...>（非 HTML 标签）
-        # line = _escape_loose_angles(line)
+        # non-HTML tags
+        line = _escape_loose_angles(line)
 
         cleaned_lines.append(line.rstrip("\n"))
 
     md = "\n".join(cleaned_lines).strip()
 
-    # ==========
-    # 4. 替换占位符（web-snippet / spoiler）
-    # ==========
-
+    # 4. Replace placeholders (web-snippet / spoiler)
     for placeholder, block_html in web_snippet_blocks.items():
         md = md.replace(placeholder, block_html)
 
     for placeholder, spoiler_html in spoiler_blocks.items():
         md = md.replace(placeholder, spoiler_html)
+
+    # fix broken [link] patterns with interleaved HTML tags
+
+    def _fix_interleaved_html_styles(text: str) -> str:
+        # match multi html tags
+        tag_open  = r"(?:<(?:u|strong|em)>)*"
+        tag_close = r"(?:</(?:u|strong|em)>)*"
+
+        pattern = re.compile(
+            rf"{tag_open}\*\*\[?{tag_close}?([^\]]+?){tag_open}?\*\*?{tag_close}?\]\(([^)]+)\)",
+            flags=re.IGNORECASE,
+        )
+
+        def rebuild(m: re.Match):
+            text_inner = m.group(1)
+            url = m.group(2)
+
+            # extract all styles
+            style_tags = re.findall(r"</?(?:u|strong|em)>", m.group(0), flags=re.IGNORECASE)
+            opening = "".join(t for t in style_tags if not t.startswith("</"))
+            closing = "".join(t for t in reversed(style_tags) if t.startswith("</"))
+
+            return f"[{opening}{text_inner}{closing}]({url})"
+
+        return pattern.sub(rebuild, text)
+
+    md = _fix_interleaved_html_styles(md)
 
     return md.strip()

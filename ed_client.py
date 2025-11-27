@@ -19,7 +19,7 @@ def request(
     backoff: float = 1.0,
     **kwargs: Any,
 ) -> requests.Response:
-    """requests.request 的简单封装，带重试。"""
+    """A simple wrap of requests.request with retry"""
     last_exception: Exception | None = None
 
     for attempt in range(1, retries + 1):
@@ -69,7 +69,11 @@ def request(
 
 
 def choice_validate(options: List[str], message: str) -> int:
-    """让用户在给定 options 里选一个数字（字符串形式），返回选中的 int 值。"""
+    """
+    Prompt the user choose a number from `options`, 
+    showing `message`,
+    return int value of the chosen one.
+    """
     while True:
         user_choice = input(message).strip()
         if user_choice in options:
@@ -79,7 +83,10 @@ def choice_validate(options: List[str], message: str) -> int:
 
 
 def safe_filename(name: str) -> str:
-    """把课程名 / module 名 / lesson 名变成安全一点的文件名。"""
+    """
+    Convert course / module / lesson name into safe name 
+    without special chars for OS display.
+    """
     if not name:
         return "unnamed"
 
@@ -90,15 +97,15 @@ def safe_filename(name: str) -> str:
 
 
 class EdClient:
-    """封装跟 Ed API 的交互。"""
+    """
+    Interactions with Ed API.
+    """
 
     def __init__(self, token: str, base_url: str = ED_HOST) -> None:
         if not token:
             raise ValueError("Ed PAT token is required")
         self.base_url = base_url.rstrip("/")
         self._headers = {"Authorization": "Bearer " + token}
-
-    # -------- 课程 / lesson 列表 --------
 
     def get_courses(self) -> List[dict]:
         r = request("GET", self.base_url + "/user", headers=self._headers)
@@ -128,7 +135,10 @@ class EdClient:
         self,
         course_id: int,
     ) -> Tuple[List[dict], Dict[int, str]]:
-        """返回 lessons 列表 + module_id -> module_name map。"""
+        """
+        return tuple including list of lessons, and dict of module_id and module_name
+        """
+
         lessons_url = f"{self.base_url}/courses/{course_id}/lessons"
         r = request("GET", lessons_url, headers=self._headers)
         data = r.json()
@@ -179,8 +189,6 @@ class EdClient:
                 module_name_map[mid] = mname
 
         return lessons_sorted, module_name_map
-
-    # -------- lesson & slide 内容 --------
 
     def fetch_lesson_detail(self, lesson_id: int) -> dict:
         lesson_url = f"{self.base_url}/lessons/{lesson_id}?view=1"
