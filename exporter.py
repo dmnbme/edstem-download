@@ -1,0 +1,120 @@
+import os
+from typing import Dict, List
+
+from ed_client import EdClient, safe_filename
+from converters import edxml_to_markdown, shift_markdown_headings
+
+
+def fetch_lesson_content(client: EdClient, lesson: dict) -> dict:
+    """获取单个 lesson 的 slides 内容，返回结构化 dict。"""
+    lesson_id = lesson["id"]
+    lesson_title = lesson.get("title")
+    lesson_type = lesson.get("type")
+
+    print(f"Fetching lesson {lesson_id} - {lesson_title!r} (type={lesson_type}) ...")
+
+    lesson_detail = client.fetch_lesson_detail(lesson_id)
+    slides = lesson_detail.get("slides") or []
+
+    processed_slides: List[dict] = []
+
+    for s in slides:
+        slide_id = s.get("id")
+        if slide_id is None:
+            continue
+
+        slide_data = client.fetch_slide_detail(slide_id)
+        stype = slide_data.get("type")
+
+        base_info = {
+            "id": slide_id,
+            "type": stype,
+            "title": slide_data.get("title"),
+            "index": slide_data.get("index"),
+        }
+
+        if stype == "document":
+            content_xml = slide_data.get("content")
+            content_md = edxml_to_markdown(content_xml)
+            processed_slides.append(
+                {
+                    **base_info,
+                    "content_xml": content_xml,
+                    "content_md": content_md,
+                }
+            )
+
+        elif stype == "quiz":
+            questions, responses, states = client.fetch_quiz_data(slide_id)
+            processed_slides.append(
+                {
+                    **base_info,
+                    "passage": slide_data.get("passage"),
+                    "questions": questions,
+                    "responses": responses,
+                    "states": states,
+                }
+            )
+        else:
+            processed_slides.append(base_info)
+
+    result = {
+        "lesson_meta": {
+            "id": lesson_id,
+            "title": lesson_title,
+            "type": lesson_type,
+        },
+        "slides": processed_slides,
+    }
+
+    print(f"  -> fetched {len(processed_slides)} slides.")
+    return result
+
+
+def save_lesson_markdown(
+    course_root: str,
+    module_name_map: Dict[int, str],
+    lesson: dict,
+    lesson_struct: dict,
+) -> None:
+    """把一个 lesson 的所有 slides 写成一个 .md 文件。"""
+    module_id = lesson.get("module_id")
+    if isinstance(module_id, int):
+        module_name = module_name_map.get(module_id, f"module_{module_id}")
+    else:
+        module_name = "module_unknown"
+
+    lesson_title = lesson.get("title") or f"lesson_{lesson['id']}"
+
+    module_dir = os.path.join(course_root, safe_filename(module_name))
+    os.makedirs(module_dir, exist_ok=True)
+
+    file_path = os.path.join(
+        module_dir,
+        safe_filename(lesson_title) + ".md",
+    )
+
+    parts: List[str] = []
+
+    for slide in lesson_struct.get("slides", []):
+        stitle = slide.get("title") or f"Slide {slide.get('index')}"
+        stype = slide.get("type")
+
+        parts.append(f"# {stitle}")
+
+        if stype == "document":
+            body = slide.get("content_md") or ""
+            if body:
+                body = shift_markdown_headings(body, offset=1)
+                parts.append(body)
+        elif stype == "quiz":
+            parts.append("_Quiz slide: questions/responses not converted to markdown yet._")
+        else:
+            parts.append(f"_Slide of type `{stype}` not converted (code/pdf/etc)._")
+
+    md_text = "\n\n".join(parts) + "\n"
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(md_text)
+
+    print(f"  -> saved markdown to {file_path}")

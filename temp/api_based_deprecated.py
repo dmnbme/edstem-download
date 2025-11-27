@@ -230,15 +230,17 @@ def list_lessons_for_course(
 def edxml_to_markdown(xml: str) -> str:
     """
     用 pypandoc 把 Ed 的 <document> XML 尽量转成 Markdown。
-    - 先处理 <web-snippet>，把其中的 HTML/CSS/JS 抽出来，变成原始 HTML 片段，用占位符保护。
+    - 先处理 <web-snippet>，把其中的 HTML/CSS/JS 抽出来：
+        * 如果 snippet 里不含 <iframe>：生成 iframe+srcdoc，隔离执行环境；
+        * 如果 snippet 里本来就有 <iframe>：不再多套一层 iframe，直接输出原始 HTML 块。
+    - <spoiler> 用占位符保护，最后替换成 <details><summary>Expand</summary>...</details>
     - 再做一些 tag 替换，让它更接近 HTML，再交给 pandoc。
     """
     if not xml:
         return ""
 
     # ==========
-    # 1. 先处理 web-snippet，抽出里面的 HTML/CSS/JS，做成 raw HTML 块
-    #    用占位符防止 pandoc 把它变成表格 / 标题等。
+    # 1. 先处理 web-snippet：用占位符保护
     # ==========
 
     web_snippet_blocks: Dict[str, str] = {}
@@ -258,16 +260,17 @@ def edxml_to_markdown(xml: str) -> str:
         js_code_parts: List[str] = []
 
         for lang, content in files:
-            # content 里面有 &lt; 之类，要还原成真正的 HTML
-            text = html.unescape(content)
+            # content 里面有 &lt; 之类，要还原成真正的代码
+            text = html.unescape(content).strip()
             lang = (lang or "").lower()
             if lang == "html":
                 html_code_parts.append(text.strip())
             elif lang == "css":
                 css_code_parts.append(text.strip())
-            elif lang == "js" or lang == "javascript":
+            elif lang in ("js", "javascript"):
                 js_code_parts.append(text.strip())
 
+        # ---- 把 html/css/js 合并成一个小页面片段 ----
         raw_html = ""
 
         if html_code_parts:
@@ -285,8 +288,31 @@ def edxml_to_markdown(xml: str) -> str:
             # 实在没东西，就干掉这个 web-snippet
             return ""
 
+        # 去掉两端空行
+        raw_html = raw_html.strip()
+
+        # ---- 决定怎么输出这个 snippet 块 ----
+        # 如果 snippet 内部本来就包含 <iframe>，不再套 iframe，直接输出 HTML。
+        # 否则，用 iframe srcdoc 包一层，隔离样式和 JS。
+        lower_html = raw_html.lower()
+        if "<iframe" in lower_html:
+            final_block = f"\n\n{raw_html}\n\n"
+        else:
+            # 构造 iframe srcdoc
+            # 用单引号包住 srcdoc，只需要转义单引号，换行替换为空格以防 parser 搞怪
+            srcdoc_content = raw_html.replace("'", "&#39;").replace("\n", " ")
+            # 可选：压一下多余空白
+            srcdoc_content = re.sub(r"\s{2,}", " ", srcdoc_content)
+
+            final_block = (
+                "\n\n"
+                f"<iframe srcdoc='{srcdoc_content}' "
+                'style="width: 100%; height: 450px; border: none;"></iframe>'
+                "\n\n"
+            )
+
         placeholder = f"EDRAWHTMLBLOCK_{len(web_snippet_blocks)}"
-        web_snippet_blocks[placeholder] = raw_html
+        web_snippet_blocks[placeholder] = final_block
         return placeholder
 
     xml_processed = re.sub(
@@ -433,6 +459,27 @@ def edxml_to_markdown(xml: str) -> str:
     html_like = html_like.replace("</link>", "</a>")
 
     # ==========
+    # 2.5 spoiler 用占位符保护（此时内部已经是 <p> 等 HTML 了）
+    # ==========
+
+    spoiler_blocks: Dict[str, str] = {}
+
+    def _spoiler_repl(match: re.Match) -> str:
+        inner = match.group(1).strip()
+        placeholder = f"EDSPOILERBLOCK_{len(spoiler_blocks)}"
+        # 这里直接用 HTML details/summary，pandoc 不要看到，之后再塞回去
+        spoiler_html = f"\n\n<details><summary>Expand</summary>\n{inner}\n</details>\n\n"
+        spoiler_blocks[placeholder] = spoiler_html
+        return placeholder
+
+    html_like = re.sub(
+        r"<spoiler>(.*?)</spoiler>",
+        _spoiler_repl,
+        html_like,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # ==========
     # 3. 调用 pandoc 把 HTML-ish 转成 Markdown
     # ==========
 
@@ -461,6 +508,14 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL,
     )
 
+    # 把 pandoc 生成的下划线 span 还原成 <u>...</u>
+    # 只匹配形如 [text]{.underline}，且 text 内不允许再出现 ']'
+    md = re.sub(
+        r"\[([^\]]+)\]\s*\{\.underline\}",
+        r"<u>\1</u>",
+        md,
+    )
+
     # 清理 pandoc 生成的一些小瑕疵
     cleaned_lines: List[str] = []
     in_code_block = False
@@ -487,11 +542,14 @@ def edxml_to_markdown(xml: str) -> str:
     md = "\n".join(cleaned_lines).strip()
 
     # ==========
-    # 4. 把 web-snippet 的占位符替换回原始 HTML/CSS/JS
+    # 4. 把 web-snippet / spoiler 的占位符替换回最终块
     # ==========
 
-    for placeholder, raw_html in web_snippet_blocks.items():
-        md = md.replace(placeholder, raw_html)
+    for placeholder, block_html in web_snippet_blocks.items():
+        md = md.replace(placeholder, block_html)
+
+    for placeholder, spoiler_html in spoiler_blocks.items():
+        md = md.replace(placeholder, spoiler_html)
 
     return md.strip()
 
