@@ -156,7 +156,6 @@ def edxml_to_markdown(xml: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-
     # 2. raw XML to HTML-ish
     html_like = xml_processed
 
@@ -350,32 +349,5 @@ def edxml_to_markdown(xml: str) -> str:
 
     for placeholder, spoiler_html in spoiler_blocks.items():
         md = md.replace(placeholder, spoiler_html)
-
-    # fix broken [link] patterns with interleaved HTML tags
-
-    def _fix_interleaved_html_styles(text: str) -> str:
-        # match multi html tags
-        tag_open  = r"(?:<(?:u|strong|em)>)*"
-        tag_close = r"(?:</(?:u|strong|em)>)*"
-
-        pattern = re.compile(
-            rf"{tag_open}\*\*\[?{tag_close}?([^\]]+?){tag_open}?\*\*?{tag_close}?\]\(([^)]+)\)",
-            flags=re.IGNORECASE,
-        )
-
-        def rebuild(m: re.Match):
-            text_inner = m.group(1)
-            url = m.group(2)
-
-            # extract all styles
-            style_tags = re.findall(r"</?(?:u|strong|em)>", m.group(0), flags=re.IGNORECASE)
-            opening = "".join(t for t in style_tags if not t.startswith("</"))
-            closing = "".join(t for t in reversed(style_tags) if t.startswith("</"))
-
-            return f"[{opening}{text_inner}{closing}]({url})"
-
-        return pattern.sub(rebuild, text)
-
-    md = _fix_interleaved_html_styles(md)
 
     return md.strip()
