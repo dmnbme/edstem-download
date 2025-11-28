@@ -12,18 +12,27 @@ from .ast_parser import Node
 
 
 def _download_image_as_data_uri(src: str) -> str:
+    """
+    Download an image and return a data: URI.
+    If we cannot reliably detect an image MIME type, fall back to image/png
+    instead of application/octet-stream so Markdown renderers still treat it
+    as an image.
+    """
     data_uri = src
-    mime = "application/octet-stream"
+    mime = None
 
     try:
         resp = requests.get(src, timeout=10)
         resp.raise_for_status()
         content = resp.content
-        mime = (
-            resp.headers.get("Content-Type")
-            or mimetypes.guess_type(src)[0]
-            or mime
-        )
+
+        # Try response header first, then file extension
+        mime = resp.headers.get("Content-Type") or mimetypes.guess_type(src)[0]
+
+        # If still unknown or non-image, default to image/png
+        if not mime or not mime.startswith("image/"):
+            mime = "image/png"
+
         b64 = base64.b64encode(content).decode("ascii")
         data_uri = f"data:{mime};base64,{b64}"
     except Exception as e:
@@ -75,9 +84,11 @@ def _render_web_snippet(node: Node) -> str:
     raw_html = raw_html.strip()
     lower_html = raw_html.lower()
 
+    # If the snippet already contains an iframe, just emit it as-is
     if "<iframe" in lower_html:
         return f"\n\n{raw_html}\n\n"
 
+    # Otherwise, wrap in an iframe srcdoc so the HTML/JS/CSS is sandboxed
     srcdoc_content = raw_html.replace("'", "&#39;").replace("\n", " ")
     srcdoc_content = re.sub(r"\s{2,}", " ", srcdoc_content).strip()
     return (
@@ -90,15 +101,20 @@ def _render_web_snippet(node: Node) -> str:
 
 def _render_node(node: Node) -> str:
     if node.kind == "text":
+        # Plain text node: HTML-escape it
         return html.escape(node.text)
 
     tag = node.tag or ""
+
+    # Root document: just render children
     if tag == "document":
         return _render_children(node.children)
 
+    # Paragraphs
     if tag == "paragraph":
         return f"<p>{_render_children(node.children)}</p>"
 
+    # Headings
     if tag == "heading":
         level = node.attrs.get("level", "1")
         try:
@@ -107,9 +123,11 @@ def _render_node(node: Node) -> str:
             lvl_int = 1
         return f"<h{lvl_int}>{_render_children(node.children)}</h{lvl_int}>"
 
+    # Line break
     if tag == "break":
         return "<br />"
 
+    # Images
     if tag == "image":
         src = node.attrs.get("src") or ""
         if not src:
@@ -125,6 +143,7 @@ def _render_node(node: Node) -> str:
             attrs.append(f'height="{height}"')
         return "<img " + " ".join(attrs) + " />"
 
+    # Lists
     if tag == "list":
         style_val = (node.attrs.get("style") or "").lower()
         list_tag = "ol" if style_val == "number" else "ul"
@@ -133,6 +152,7 @@ def _render_node(node: Node) -> str:
     if tag == "list-item":
         return f"<li>{_render_children(node.children)}</li>"
 
+    # Text styles
     if tag == "bold":
         return f"<strong>{_render_children(node.children)}</strong>"
 
@@ -142,11 +162,36 @@ def _render_node(node: Node) -> str:
     if tag == "underline":
         return f"<u>{_render_children(node.children)}</u>"
 
+    # Blockquote (for quote-style blocks)
+    if tag in ("blockquote", "quote"):
+        return f"<blockquote>{_render_children(node.children)}</blockquote>"
+
+    # Inline code
+    if tag == "code":
+        return f"<code>{_render_children(node.children)}</code>"
+
+    # Preformatted block (non-snippet code blocks)
+    if tag == "pre":
+        inner = _render_children(node.children)
+        return f"<pre><code>{inner}</code></pre>"
+
+    # Iframe (if present in raw XML)
+    if tag == "iframe":
+        # Rebuild <iframe ...> with attributes preserved
+        attrs_parts = [
+            f'{name}="{html.escape(value, quote=True)}"'
+            for name, value in (node.attrs or {}).items()
+        ]
+        attrs_str = (" " + " ".join(attrs_parts)) if attrs_parts else ""
+        return f"<iframe{attrs_str}>{_render_children(node.children)}</iframe>"
+
+    # Links
     if tag == "link":
         href = node.attrs.get("href") or ""
         safe_href = html.escape(href, quote=True)
         return f'<a href="{safe_href}">{_render_children(node.children)}</a>'
 
+    # Ed "snippet" code blocks
     if tag == "snippet":
         lang = (node.attrs.get("language") or "").strip()
         code_parts: List[str] = []
@@ -160,9 +205,11 @@ def _render_node(node: Node) -> str:
         class_attr = f' class="language-{lang}"' if lang else ""
         return f"<pre><code{class_attr}>{code_html}</code></pre>"
 
+    # Web snippet (HTML/CSS/JS playground)
     if tag == "web-snippet":
         return _render_web_snippet(node)
 
+    # Spoiler -> <details><summary>Expand</summary>...</details>
     if tag == "spoiler":
         inner = _render_children(node.children).strip()
         return (
@@ -172,6 +219,7 @@ def _render_node(node: Node) -> str:
             "</details>\n\n"
         )
 
+    # Default: just render children, dropping the wrapper tag
     return _render_children(node.children)
 
 
@@ -180,6 +228,10 @@ def ast_to_html(node: Node) -> str:
 
 
 def _html_to_markdown_via_ast(html_text: str) -> str:
+    """
+    Use pandoc's JSON AST as an intermediate so that HTML is normalized
+    before converting to Markdown.
+    """
     ast_json = pypandoc.convert_text(
         html_text,
         "json",
@@ -196,10 +248,11 @@ def _html_to_markdown_via_ast(html_text: str) -> str:
     )
     return md.strip()
 
+
 def _post_process_markdown(md: str) -> str:
     """
     Post-process the Markdown produced by pandoc to:
-      - Convert image with size attributes to <img> tags
+      - Convert images with size attributes to <img> tags
       - Convert pandoc underline spans to <u>...</u>
       - Fix duplicated list markers
       - Clean up stray backslashes
@@ -279,6 +332,7 @@ def _post_process_markdown(md: str) -> str:
         cleaned_lines.append(line.rstrip("\n"))
 
     return "\n".join(cleaned_lines).strip()
+
 
 def ast_to_markdown(node: Node) -> str:
     html_text = ast_to_html(node)
