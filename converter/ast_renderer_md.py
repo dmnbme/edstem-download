@@ -3,12 +3,28 @@ import html
 import json
 import mimetypes
 import re
-from typing import List
+from typing import List, Dict
 
 import pypandoc
 import requests
 
 from .ast_parser import Node
+
+
+# Global store for raw HTML blocks that must survive pandoc unchanged
+_RAW_BLOCKS: Dict[str, str] = {}
+
+
+def _register_raw_block(html_snippet: str, kind: str) -> str:
+    """
+    Register a raw HTML snippet and return a unique placeholder key.
+    This placeholder will go through pandoc as plain text, and we will
+    replace it back to the HTML snippet in _post_process_markdown.
+    """
+    global _RAW_BLOCKS
+    key = f"RAWBLOCK_{kind.upper()}_{len(_RAW_BLOCKS)}"
+    _RAW_BLOCKS[key] = html_snippet
+    return key
 
 
 def _download_image_as_data_uri(src: str) -> str:
@@ -46,6 +62,10 @@ def _render_children(children: List[Node]) -> str:
 
 
 def _render_web_snippet(node: Node) -> str:
+    """
+    Render <web-snippet> as a raw HTML block (iframe or inline HTML),
+    but return a placeholder so pandoc does not try to rewrite it.
+    """
     html_code_parts: List[str] = []
     css_code_parts: List[str] = []
     js_code_parts: List[str] = []
@@ -86,17 +106,20 @@ def _render_web_snippet(node: Node) -> str:
 
     # If the snippet already contains an iframe, just emit it as-is
     if "<iframe" in lower_html:
-        return f"\n\n{raw_html}\n\n"
+        html_block = f"\n\n{raw_html}\n\n"
+    else:
+        # Otherwise, wrap in an iframe srcdoc so the HTML/JS/CSS is sandboxed
+        srcdoc_content = raw_html.replace("'", "&#39;").replace("\n", " ")
+        srcdoc_content = re.sub(r"\s{2,}", " ", srcdoc_content).strip()
+        html_block = (
+            "\n\n"
+            f"<iframe srcdoc='{srcdoc_content}' "
+            'style="width: 100%; height: 450px; border: none;"></iframe>'
+            "\n\n"
+        )
 
-    # Otherwise, wrap in an iframe srcdoc so the HTML/JS/CSS is sandboxed
-    srcdoc_content = raw_html.replace("'", "&#39;").replace("\n", " ")
-    srcdoc_content = re.sub(r"\s{2,}", " ", srcdoc_content).strip()
-    return (
-        "\n\n"
-        f"<iframe srcdoc='{srcdoc_content}' "
-        'style="width: 100%; height: 450px; border: none;"></iframe>'
-        "\n\n"
-    )
+    # Register as raw block and return placeholder
+    return _register_raw_block(html_block, "websnippet")
 
 
 def _render_node(node: Node) -> str:
@@ -183,7 +206,13 @@ def _render_node(node: Node) -> str:
             for name, value in (node.attrs or {}).items()
         ]
         attrs_str = (" " + " ".join(attrs_parts)) if attrs_parts else ""
-        return f"<iframe{attrs_str}>{_render_children(node.children)}</iframe>"
+        html_block = (
+            "\n\n"
+            f"<iframe{attrs_str}>{_render_children(node.children)}</iframe>"
+            "\n\n"
+        )
+        # Register as raw block
+        return _register_raw_block(html_block, "iframe")
 
     # Links
     if tag == "link":
@@ -210,14 +239,16 @@ def _render_node(node: Node) -> str:
         return _render_web_snippet(node)
 
     # Spoiler -> <details><summary>Expand</summary>...</details>
+    # Also protected via placeholder so pandoc does not rewrite it.
     if tag == "spoiler":
         inner = _render_children(node.children).strip()
-        return (
+        html_block = (
             "\n\n"
             "<details><summary>Expand</summary>\n"
             f"{inner}\n"
             "</details>\n\n"
         )
+        return _register_raw_block(html_block, "spoiler")
 
     # Default: just render children, dropping the wrapper tag
     return _render_children(node.children)
@@ -257,10 +288,23 @@ def _post_process_markdown(md: str) -> str:
       - Fix duplicated list markers
       - Clean up stray backslashes
       - Remove Typora math trigger backslashes around [ and ]
+      - Remove angle brackets around bare autolinks (<url> -> url)
+      - Restore raw HTML blocks (spoilers / iframes / web-snippets)
     """
+    global _RAW_BLOCKS
+
     md = md or ""
     if not md.strip():
+        # Also clear raw blocks to avoid leaking across calls
+        _RAW_BLOCKS = {}
         return md.strip()
+
+    # Fix pandoc autolinks: <url> -> url (but keep link targets like [text](url))
+    md = re.sub(
+        r"(?<!\()<(https?://[^ >]+)>",
+        r"\1",
+        md,
+    )
 
     # Markdown image syntax with {width=".."} etc. -> <img ...>
     def _img_md_to_html(match: re.Match) -> str:
@@ -331,10 +375,48 @@ def _post_process_markdown(md: str) -> str:
 
         cleaned_lines.append(line.rstrip("\n"))
 
-    return "\n".join(cleaned_lines).strip()
+    md = "\n".join(cleaned_lines).strip()
+
+    # Restore raw HTML blocks (spoiler / iframe / web-snippet, etc.)
+    for placeholder, html_snippet in _RAW_BLOCKS.items():
+        md = md.replace(placeholder, html_snippet)
+
+    # Clear for next call
+    _RAW_BLOCKS = {}
+
+    # fix links with label: [label](url) -> <a href="url">label</a>
+    def _links_with_html_to_html(text: str) -> str:
+        """
+        Only convert markdown links whose label contains '<' or '>' to HTML.
+        Normal [text](url) is preserved as-is.
+        Images ![alt](src) are excluded here.
+        """
+        pattern = r'(?<!!)\[([^\]]+)\]\(([^)\s]+)\)'
+
+        def repl(m: re.Match) -> str:
+            label = m.group(1)
+            url = m.group(2)
+
+            # 没有 HTML 的 label，直接原样返回，不转换
+            if "<" not in label and ">" not in label:
+                return m.group(0)
+
+            safe_url = html.escape(url, quote=True)
+            # label 里面可能有 <u> / ** 等，原样保留
+            return f'<a href="{safe_url}">{label}</a>'
+
+        return re.sub(pattern, repl, text)
+
+    md = _links_with_html_to_html(md)
+
+    return md
 
 
 def ast_to_markdown(node: Node) -> str:
+    # Reset raw block store at the start of each top-level conversion
+    global _RAW_BLOCKS
+    _RAW_BLOCKS = {}
+
     html_text = ast_to_html(node)
     if not html_text.strip():
         return ""
