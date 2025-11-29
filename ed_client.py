@@ -228,7 +228,7 @@ class EdClient:
             print(f"{idx}. {code} {name}")
             no_list.append(str(idx))
 
-        choice = choice_validate(no_list, "\nSelect the course you want: ")
+        choice = choice_validate(no_list, "\nSelect the course you want to download: ")
         selected_course = courses[choice - 1]
         print(
             f"\nYou selected: {selected_course['course']['code']} "
