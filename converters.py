@@ -18,9 +18,9 @@ def shift_markdown_headings(md: str, offset: int = 1) -> str:
     return re.sub(r"^(#{1,6})\s+(.*)$", _repl, md, flags=re.MULTILINE)
 
 
-def edxml_to_markdown(xml: str) -> str:
+def edxml_to_markdown(xml: str, image_resolver=None) -> str:
     """
     Convert raw EdXML to Markdown via the shared AST pipeline.
     """
     node = parse_edxml_to_ast(xml)
-    return ast_to_markdown(node)
+    return ast_to_markdown(node, image_resolver=image_resolver)

@@ -1,11 +1,12 @@
 import os
+from pathlib import Path
 from typing import Dict, List
 
 from ed_client import EdClient, safe_filename
 from converters import edxml_to_markdown, shift_markdown_headings
 
 
-def fetch_lesson_content(client: EdClient, lesson: dict) -> dict:
+def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) -> dict:
     """获取单个 lesson 的 slides 内容，返回结构化 dict。"""
     lesson_id = lesson["id"]
     lesson_title = lesson.get("title")
@@ -35,7 +36,10 @@ def fetch_lesson_content(client: EdClient, lesson: dict) -> dict:
 
         if stype == "document":
             content_xml = slide_data.get("content")
-            content_md = edxml_to_markdown(content_xml)
+            content_md = edxml_to_markdown(
+                content_xml,
+                image_resolver=image_resolver,
+            )
             processed_slides.append(
                 {
                     **base_info,
@@ -72,7 +76,7 @@ def fetch_lesson_content(client: EdClient, lesson: dict) -> dict:
 
 
 def save_lesson_markdown(
-    course_root: str,
+    course_root: Path,
     module_name_map: Dict[int, str],
     lesson: dict,
     lesson_struct: dict,
@@ -86,13 +90,10 @@ def save_lesson_markdown(
 
     lesson_title = lesson.get("title") or f"lesson_{lesson['id']}"
 
-    module_dir = os.path.join(course_root, safe_filename(module_name))
-    os.makedirs(module_dir, exist_ok=True)
+    module_dir = Path(course_root) / safe_filename(module_name)
+    module_dir.mkdir(parents=True, exist_ok=True)
 
-    file_path = os.path.join(
-        module_dir,
-        safe_filename(lesson_title) + ".md",
-    )
+    file_path = module_dir / f"{safe_filename(lesson_title)}.md"
 
     parts: List[str] = []
 

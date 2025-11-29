@@ -1,12 +1,9 @@
-import base64
 import html
 import json
-import mimetypes
 import re
-from typing import List, Dict
+from typing import Callable, Dict, List
 
 import pypandoc
-import requests
 
 from .ast_parser import Node
 
@@ -27,41 +24,17 @@ def _register_raw_block(html_snippet: str, kind: str) -> str:
     return key
 
 
-def _download_image_as_data_uri(src: str) -> str:
-    """
-    Download an image and return a data: URI.
-    If we cannot reliably detect an image MIME type, fall back to image/png
-    instead of application/octet-stream so Markdown renderers still treat it
-    as an image.
-    """
-    data_uri = src
-    mime = None
-
-    try:
-        resp = requests.get(src, timeout=10)
-        resp.raise_for_status()
-        content = resp.content
-
-        # Try response header first, then file extension
-        mime = resp.headers.get("Content-Type") or mimetypes.guess_type(src)[0]
-
-        # If still unknown or non-image, default to image/png
-        if not mime or not mime.startswith("image/"):
-            mime = "image/png"
-
-        b64 = base64.b64encode(content).decode("ascii")
-        data_uri = f"data:{mime};base64,{b64}"
-    except Exception as e:
-        print(f"Image download failed for {src}: {e}")
-
-    return data_uri
+def _render_children(
+    children: List[Node],
+    image_resolver: Callable[[str], str] | None,
+) -> str:
+    return "".join(_render_node(child, image_resolver) for child in children)
 
 
-def _render_children(children: List[Node]) -> str:
-    return "".join(_render_node(child) for child in children)
-
-
-def _render_web_snippet(node: Node) -> str:
+def _render_web_snippet(
+    node: Node,
+    image_resolver: Callable[[str], str] | None,
+) -> str:
     """
     Render <web-snippet> as a raw HTML block (iframe or inline HTML),
     but return a placeholder so pandoc does not try to rewrite it.
@@ -122,7 +95,10 @@ def _render_web_snippet(node: Node) -> str:
     return _register_raw_block(html_block, "websnippet")
 
 
-def _render_node(node: Node) -> str:
+def _render_node(
+    node: Node,
+    image_resolver: Callable[[str], str] | None,
+) -> str:
     if node.kind == "text":
         # Plain text node: HTML-escape it
         return html.escape(node.text)
@@ -131,11 +107,11 @@ def _render_node(node: Node) -> str:
 
     # Root document: just render children
     if tag == "document":
-        return _render_children(node.children)
+        return _render_children(node.children, image_resolver)
 
     # Paragraphs
     if tag == "paragraph":
-        return f"<p>{_render_children(node.children)}</p>"
+        return f"<p>{_render_children(node.children, image_resolver)}</p>"
 
     # Headings
     if tag == "heading":
@@ -144,7 +120,7 @@ def _render_node(node: Node) -> str:
             lvl_int = max(1, min(6, int(level)))
         except ValueError:
             lvl_int = 1
-        return f"<h{lvl_int}>{_render_children(node.children)}</h{lvl_int}>"
+        return f"<h{lvl_int}>{_render_children(node.children, image_resolver)}</h{lvl_int}>"
 
     # Line break
     if tag == "break":
@@ -157,9 +133,9 @@ def _render_node(node: Node) -> str:
             return ""
         width = node.attrs.get("width")
         height = node.attrs.get("height")
-        data_uri = _download_image_as_data_uri(src)
+        processed_src = image_resolver(src) if image_resolver else src
 
-        attrs = [f'src="{data_uri}"', 'alt=""']
+        attrs = [f'src="{processed_src}"', 'alt=""']
         if width:
             attrs.append(f'width="{width}"')
         if height:
@@ -170,32 +146,32 @@ def _render_node(node: Node) -> str:
     if tag == "list":
         style_val = (node.attrs.get("style") or "").lower()
         list_tag = "ol" if style_val == "number" else "ul"
-        return f"<{list_tag}>{_render_children(node.children)}</{list_tag}>"
+        return f"<{list_tag}>{_render_children(node.children, image_resolver)}</{list_tag}>"
 
     if tag == "list-item":
-        return f"<li>{_render_children(node.children)}</li>"
+        return f"<li>{_render_children(node.children, image_resolver)}</li>"
 
     # Text styles
     if tag == "bold":
-        return f"<strong>{_render_children(node.children)}</strong>"
+        return f"<strong>{_render_children(node.children, image_resolver)}</strong>"
 
     if tag == "italic":
-        return f"<em>{_render_children(node.children)}</em>"
+        return f"<em>{_render_children(node.children, image_resolver)}</em>"
 
     if tag == "underline":
-        return f"<u>{_render_children(node.children)}</u>"
+        return f"<u>{_render_children(node.children, image_resolver)}</u>"
 
     # Blockquote (for quote-style blocks)
     if tag in ("blockquote", "quote"):
-        return f"<blockquote>{_render_children(node.children)}</blockquote>"
+        return f"<blockquote>{_render_children(node.children, image_resolver)}</blockquote>"
 
     # Inline code
     if tag == "code":
-        return f"<code>{_render_children(node.children)}</code>"
+        return f"<code>{_render_children(node.children, image_resolver)}</code>"
 
     # Preformatted block (non-snippet code blocks)
     if tag == "pre":
-        inner = _render_children(node.children)
+        inner = _render_children(node.children, image_resolver)
         return f"<pre><code>{inner}</code></pre>"
 
     # Iframe (if present in raw XML)
@@ -208,7 +184,7 @@ def _render_node(node: Node) -> str:
         attrs_str = (" " + " ".join(attrs_parts)) if attrs_parts else ""
         html_block = (
             "\n\n"
-            f"<iframe{attrs_str}>{_render_children(node.children)}</iframe>"
+            f"<iframe{attrs_str}>{_render_children(node.children, image_resolver)}</iframe>"
             "\n\n"
         )
         # Register as raw block
@@ -218,7 +194,7 @@ def _render_node(node: Node) -> str:
     if tag == "link":
         href = node.attrs.get("href") or ""
         safe_href = html.escape(href, quote=True)
-        return f'<a href="{safe_href}">{_render_children(node.children)}</a>'
+        return f'<a href="{safe_href}">{_render_children(node.children, image_resolver)}</a>'
 
     # Ed "snippet" code blocks
     if tag == "snippet":
@@ -236,12 +212,12 @@ def _render_node(node: Node) -> str:
 
     # Web snippet (HTML/CSS/JS playground)
     if tag == "web-snippet":
-        return _render_web_snippet(node)
+        return _render_web_snippet(node, image_resolver)
 
     # Spoiler -> <details><summary>Expand</summary>...</details>
     # Also protected via placeholder so pandoc does not rewrite it.
     if tag == "spoiler":
-        inner = _render_children(node.children).strip()
+        inner = _render_children(node.children, image_resolver).strip()
         html_block = (
             "\n\n"
             "<details><summary>Expand</summary>\n"
@@ -251,11 +227,14 @@ def _render_node(node: Node) -> str:
         return _register_raw_block(html_block, "spoiler")
 
     # Default: just render children, dropping the wrapper tag
-    return _render_children(node.children)
+    return _render_children(node.children, image_resolver)
 
 
-def ast_to_html(node: Node) -> str:
-    return _render_node(node)
+def ast_to_html(
+    node: Node,
+    image_resolver: Callable[[str], str] | None = None,
+) -> str:
+    return _render_node(node, image_resolver)
 
 
 def _html_to_markdown_via_ast(html_text: str) -> str:
@@ -412,12 +391,15 @@ def _post_process_markdown(md: str) -> str:
     return md
 
 
-def ast_to_markdown(node: Node) -> str:
+def ast_to_markdown(
+    node: Node,
+    image_resolver: Callable[[str], str] | None = None,
+) -> str:
     # Reset raw block store at the start of each top-level conversion
     global _RAW_BLOCKS
     _RAW_BLOCKS = {}
 
-    html_text = ast_to_html(node)
+    html_text = ast_to_html(node, image_resolver=image_resolver)
     if not html_text.strip():
         return ""
     md = _html_to_markdown_via_ast(html_text)

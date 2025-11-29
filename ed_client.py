@@ -1,6 +1,12 @@
+import base64
+import imghdr
+import mimetypes
+import os
 import re
 import time
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Tuple
+from urllib.parse import urlparse
 
 import requests
 
@@ -103,6 +109,108 @@ class EdClient:
             raise ValueError("Ed PAT token is required")
         self.base_url = base_url.rstrip("/")
         self._headers = {"Authorization": "Bearer " + token}
+        # cache downloaded images to avoid duplicates
+        # value: (content, mime from response header or None)
+        self._image_cache: Dict[str, Tuple[bytes, str | None]] = {}
+
+    def _download_image_bytes(self, src: str) -> Tuple[bytes, str | None] | None:
+        if src in self._image_cache:
+            return self._image_cache[src]
+        try:
+            resp = requests.get(src, timeout=10)
+            resp.raise_for_status()
+            content_type = resp.headers.get("Content-Type")
+            self._image_cache[src] = (resp.content, content_type)
+            return resp.content, content_type
+        except Exception as e:
+            print(f"Image download failed for {src}: {e}")
+            return None
+
+    def make_image_resolver(
+        self,
+        mode: str,
+        *,
+        image_dir: Path | None = None,
+        markdown_dir: Path | None = None,
+    ) -> Callable[[str], str]:
+        """
+        Return a callable that maps image src -> processed src according
+        to the configured mode: base64 | file | url.
+        """
+        mode = (mode or "base64").lower()
+        cache: Dict[str, str] = {}
+
+        def _infer_ext(src: str, content: bytes | None, header_mime: str | None) -> str:
+            # 1) try response header mime
+            if header_mime:
+                guessed = mimetypes.guess_extension(header_mime)
+                if guessed:
+                    return guessed
+                if header_mime.startswith("image/"):
+                    return ".jpg"
+
+            # 2) try mimetype from URL
+            url_mime = mimetypes.guess_type(src)[0]
+            if url_mime:
+                guessed = mimetypes.guess_extension(url_mime)
+                if guessed:
+                    return guessed
+
+            # 3) inspect bytes with imghdr
+            if content:
+                kind = imghdr.what(None, h=content)
+                if kind:
+                    return f".{kind}"
+
+            # 4) fall back to URL suffix if present
+            parsed = urlparse(src)
+            suffix = os.path.splitext(parsed.path)[1].lower()
+            if suffix and suffix not in {".bin", ".dat"}:
+                return suffix
+
+            # 5) safest default for images
+            return ".jpg"
+
+        def resolve(src: str) -> str:
+            if not src:
+                return ""
+            if src in cache:
+                return cache[src]
+
+            result = src  # fallback
+
+            if mode == "url":
+                result = src
+
+            elif mode == "base64":
+                download = self._download_image_bytes(src)
+                if download is not None:
+                    content, header_mime = download
+                    mime = (
+                        header_mime
+                        or mimetypes.guess_type(src)[0]
+                        or "application/octet-stream"
+                    )
+                    b64 = base64.b64encode(content).decode("ascii")
+                    result = f"data:{mime};base64,{b64}"
+
+            elif mode == "file" and image_dir:
+                download = self._download_image_bytes(src)
+                if download is not None:
+                    content, header_mime = download
+                    ext = _infer_ext(src, content, header_mime)
+                    filename = f"img{len(cache)+1:03d}{ext}"
+                    target = image_dir / filename
+                    if not target.parent.exists():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+                    rel_base = markdown_dir if markdown_dir else image_dir
+                    result = os.path.relpath(target, rel_base)
+
+            cache[src] = result
+            return result
+
+        return resolve
 
     def get_courses(self) -> List[dict]:
         r = request("GET", self.base_url + "/user", headers=self._headers)
