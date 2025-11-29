@@ -1,0 +1,9 @@
+# Please refer to the documentation
+
+[ed]
+host = "https://edstem.org/api"     # Base API host
+token = ""    # Optional fallback token if you don't want to use the ED_PAT env var
+
+[export]
+image_mode = "local"     # "base64" / "file" / "url"
+output_dir = ""

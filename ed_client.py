@@ -4,9 +4,6 @@ from typing import Any, Dict, List, Tuple
 
 import requests
 
-from config import ED_HOST
-
-
 class EdApiError(Exception):
     pass
 
@@ -101,7 +98,7 @@ class EdClient:
     Interactions with Ed API.
     """
 
-    def __init__(self, token: str, base_url: str = ED_HOST) -> None:
+    def __init__(self, token: str, base_url: str) -> None:
         if not token:
             raise ValueError("Ed PAT token is required")
         self.base_url = base_url.rstrip("/")

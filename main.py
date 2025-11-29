@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from config import ED_HOST, get_token
+from config import load_config, get_ed_host, get_token, get_image_mode, get_output_dir
 from ed_client import EdClient, safe_filename
 from exporter import fetch_lesson_content, save_lesson_markdown
 
@@ -32,13 +32,13 @@ def export_course_lessons_to_markdown(client: EdClient) -> None:
 
 
 def main() -> None:
-    token = get_token()
+    cfg = load_config()  # 默认读取 ./config.toml
+    base_url = get_ed_host(cfg)
+    token = get_token(cfg)
+    image_mode = get_image_mode(cfg)
+    output_dir = get_output_dir(cfg)
 
-    if not token:
-        print("Please set your Ed API token in the ED_PAT environment variable, or in the config file.")
-        sys.exit(1)
-
-    client = EdClient(token=token, base_url=ED_HOST)
+    client = EdClient(token=token, base_url=base_url)
     export_course_lessons_to_markdown(client)
 
 
