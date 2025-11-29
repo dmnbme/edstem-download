@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import filetype
 import requests
@@ -109,19 +109,31 @@ class EdClient:
             raise ValueError("Ed PAT token is required")
         self.base_url = base_url.rstrip("/")
         self._headers = {"Authorization": "Bearer " + token}
-        # cache downloaded images to avoid duplicates
-        # value: (content, mime from response header or None)
-        self._image_cache: Dict[str, Tuple[bytes, str | None]] = {}
+        # cache downloaded assets to avoid duplicates
+        # value: (content, mime from response header or None, filename from header or None)
+        self._image_cache: Dict[str, Tuple[bytes, str | None, str | None]] = {}
 
-    def _download_image_bytes(self, src: str) -> Tuple[bytes, str | None] | None:
+    def _parse_filename(self, content_disposition: str | None) -> str | None:
+        if not content_disposition:
+            return None
+        match = re.search(r'filename\\*=UTF-8\\\'\\\'([^;]+)', content_disposition)
+        if match:
+            return match.group(1)
+        match = re.search(r'filename="?([^";]+)"?', content_disposition)
+        if match:
+            return match.group(1)
+        return None
+
+    def _download_image_bytes(self, src: str) -> Tuple[bytes, str | None, str | None] | None:
         if src in self._image_cache:
             return self._image_cache[src]
         try:
             resp = requests.get(src, timeout=10)
             resp.raise_for_status()
             content_type = resp.headers.get("Content-Type")
-            self._image_cache[src] = (resp.content, content_type)
-            return resp.content, content_type
+            filename = self._parse_filename(resp.headers.get("Content-Disposition"))
+            self._image_cache[src] = (resp.content, content_type, filename)
+            return resp.content, content_type, filename
         except Exception as e:
             print(f"Image download failed for {src}: {e}")
             return None
@@ -130,7 +142,7 @@ class EdClient:
         self,
         mode: str,
         *,
-        image_dir: Path | None = None,
+        assets_dir: Path | None = None,
         markdown_dir: Path | None = None,
     ) -> Callable[[str], str]:
         """
@@ -139,6 +151,8 @@ class EdClient:
         """
         mode = (mode or "base64").lower()
         cache: Dict[str, str] = {}
+        counters: Dict[str, int] = {"img": 0, "pdf": 0, "asset": 0}
+        used_names: set[str] = set()
 
         def _infer_ext(src: str, content: bytes | None, header_mime: str | None) -> str:
             # 1) try response header mime
@@ -185,7 +199,7 @@ class EdClient:
             elif mode == "base64":
                 download = self._download_image_bytes(src)
                 if download is not None:
-                    content, header_mime = download
+                    content, header_mime, header_filename = download
                     mime = header_mime or mimetypes.guess_type(src)[0]
                     if not mime:
                         kind = filetype.guess(content)
@@ -193,18 +207,53 @@ class EdClient:
                     b64 = base64.b64encode(content).decode("ascii")
                     result = f"data:{mime};base64,{b64}"
 
-            elif mode == "file" and image_dir:
+            elif mode == "file" and assets_dir:
                 download = self._download_image_bytes(src)
                 if download is not None:
-                    content, header_mime = download
+                    content, header_mime, header_filename = download
+                    mime = header_mime or mimetypes.guess_type(src)[0]
+                    if not mime:
+                        kind = filetype.guess(content)
+                        mime = kind.mime if kind and kind.mime else None
                     ext = _infer_ext(src, content, header_mime)
-                    filename = f"img{len(cache)+1:03d}{ext}"
-                    target = image_dir / filename
+                    prefix = "pdf" if (ext.lower() == ".pdf" or (mime and mime.startswith("application/pdf"))) else "img"
+                    if prefix == "img":
+                        img_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".tif", ".tiff"}
+                        if ext.lower() not in img_exts and not (mime and mime.startswith("image/")):
+                            prefix = "asset"
+                    counters[prefix] = counters.get(prefix, 0) + 1
+
+                    raw_name = None
+                    if header_filename:
+                        raw_name = unquote(header_filename)
+                    else:
+                        parsed = urlparse(src)
+                        basename = os.path.basename(parsed.path)
+                        if basename:
+                            raw_name = unquote(basename)
+
+                    if raw_name:
+                        raw_name = safe_filename(raw_name)
+                        if not raw_name.lower().endswith(ext.lower()):
+                            raw_name = f"{raw_name}{ext}"
+                        base, suffix_ext = os.path.splitext(raw_name)
+                        candidate = raw_name
+                        dedup = 1
+                        while candidate in used_names:
+                            dedup += 1
+                            candidate = f"{base}_{dedup:03d}{suffix_ext or ext}"
+                        filename = candidate
+                    else:
+                        filename = f"{prefix}{counters[prefix]:03d}{ext}"
+                    used_names.add(filename)
+                    target = assets_dir / filename
                     if not target.parent.exists():
                         target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(content)
-                    rel_base = markdown_dir if markdown_dir else image_dir
-                    result = os.path.relpath(target, rel_base)
+                    rel_base = markdown_dir if markdown_dir else assets_dir
+                    rel_path = os.path.relpath(target, rel_base)
+                    # URL-encode to make spaces/special chars safe in HTML src/href
+                    result = quote(rel_path.replace(os.sep, "/"), safe="/")
 
             cache[src] = result
             return result

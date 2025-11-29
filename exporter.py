@@ -7,7 +7,9 @@ from converters import edxml_to_markdown, shift_markdown_headings
 
 
 def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) -> dict:
-    """获取单个 lesson 的 slides 内容，返回结构化 dict。"""
+    """
+    Get slides of a lesson, returns structured dict.
+    """
     lesson_id = lesson["id"]
     lesson_title = lesson.get("title")
     lesson_type = lesson.get("type")
@@ -35,7 +37,7 @@ def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) ->
         }
 
         if stype == "document":
-            content_xml = slide_data.get("content")
+            content_xml = slide_data.get("content") or ""
             content_md = edxml_to_markdown(
                 content_xml,
                 image_resolver=image_resolver,
@@ -59,6 +61,13 @@ def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) ->
                     "states": states,
                 }
             )
+        elif stype == "pdf":
+            processed_slides.append(
+                {
+                    **base_info,
+                    "file_url": slide_data.get("file_url"),
+                }
+            )
         else:
             processed_slides.append(base_info)
 
@@ -80,8 +89,11 @@ def save_lesson_markdown(
     module_name_map: Dict[int, str],
     lesson: dict,
     lesson_struct: dict,
+    assets_resolver=None,
 ) -> None:
-    """把一个 lesson 的所有 slides 写成一个 .md 文件。"""
+    """
+    Write all the slides of a lesson into a markdown file.
+    """
     module_id = lesson.get("module_id")
     if isinstance(module_id, int):
         module_name = module_name_map.get(module_id, f"module_{module_id}")
@@ -110,6 +122,12 @@ def save_lesson_markdown(
                 parts.append(body)
         elif stype == "quiz":
             parts.append("_Quiz slide: questions/responses not converted to markdown yet._")
+        elif stype == "pdf":
+            file_url = slide.get("file_url") or "(missing pdf url)"
+            if assets_resolver:
+                file_url = assets_resolver(file_url)
+            label = Path(file_url).name if file_url else "PDF"
+            parts.append(f"[{label}]({file_url})")
         else:
             parts.append(f"_Slide of type `{stype}` not converted (code/pdf/etc)._")
 

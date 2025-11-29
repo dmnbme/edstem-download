@@ -38,19 +38,25 @@ def export_course_lessons_to_markdown(
             module_name = "module_unknown"
 
         module_dir = course_root / safe_filename(module_name)
-        image_dir = module_dir / "images"
-        image_resolver = client.make_image_resolver(
+        assets_dir = module_dir / "assets"
+        resolver = client.make_image_resolver(
             image_mode,
-            image_dir=image_dir,
+            assets_dir=assets_dir,
             markdown_dir=module_dir,
         )
 
         lesson_struct = fetch_lesson_content(
             client,
             lesson,
-            image_resolver=image_resolver,
+            image_resolver=resolver,
         )
-        save_lesson_markdown(course_root, module_name_map, lesson, lesson_struct)
+        save_lesson_markdown(
+            course_root,
+            module_name_map,
+            lesson,
+            lesson_struct,
+            assets_resolver=resolver,
+        )
 
 
 def main() -> None:
