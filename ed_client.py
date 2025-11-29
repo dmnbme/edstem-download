@@ -1,5 +1,4 @@
 import base64
-import imghdr
 import mimetypes
 import os
 import re
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
 from urllib.parse import urlparse
 
+import filetype
 import requests
 
 class EdApiError(Exception):
@@ -156,11 +156,11 @@ class EdClient:
                 if guessed:
                     return guessed
 
-            # 3) inspect bytes with imghdr
+            # 3) inspect bytes with filetype
             if content:
-                kind = imghdr.what(None, h=content)
-                if kind:
-                    return f".{kind}"
+                kind = filetype.guess(content)
+                if kind and kind.extension:
+                    return f".{kind.extension}"
 
             # 4) fall back to URL suffix if present
             parsed = urlparse(src)
@@ -186,11 +186,10 @@ class EdClient:
                 download = self._download_image_bytes(src)
                 if download is not None:
                     content, header_mime = download
-                    mime = (
-                        header_mime
-                        or mimetypes.guess_type(src)[0]
-                        or "application/octet-stream"
-                    )
+                    mime = header_mime or mimetypes.guess_type(src)[0]
+                    if not mime:
+                        kind = filetype.guess(content)
+                        mime = kind.mime if kind and kind.mime else "application/octet-stream"
                     b64 = base64.b64encode(content).decode("ascii")
                     result = f"data:{mime};base64,{b64}"
 
