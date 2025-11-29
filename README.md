@@ -4,17 +4,27 @@ A small but powerful tool for downloading Ed lessons (slides) from edstem.org an
 
 It preserves as much of the original slide content as possible, including code snippets, HTML widgets, spoilers, and embedded assets.
 
-**Copyright warning: Please obtain permission from your course staff before using this tool.**
-
 ## Supported content
 
-| Original content                                             | Output using                                     |
-| ------------------------------------------------------------ | ------------------------------------------------ |
-| - Bold / Italic / Strikethrough text<br />- Inline code / Code block<br />- List<br />- Link<br />- Quote block<br />- Heading | Native Markdown                                  |
-| - Underlined text<br />- Spoiler                             | HTML                                             |
-| - Image                                                      | Base64-encoded in HTML with preserved dimensions |
-| - Admonition                                                 | Extended Markdown (GFM)                          |
-| - Web snippet                                                | iframe in HTML                                   |
+| Original content                                             | Output using             |
+| ------------------------------------------------------------ | ------------------------ |
+| - Bold / Italic / Strikethrough text<br />- Inline code / Code block<br />- List<br />- Link without styles<br />- Quote block<br />- Heading | Native Markdown          |
+| - Underlined text<br />- Spoiler<br />- Link with styles     | HTML                     |
+| - Image                                                      | Base64-encoded in HTML   |
+| - Admonition                                                 | GItHub Flavored Markdown |
+| - Web snippet                                                | iframe in HTML           |
+
+## Dependencies
+
+
 
 ## Usage
 
+1. Create an API token on Ed settings page
+2. Set the API token in `config.toml` or environment variable `ED_PAT`
+3. 
+
+## Disclaimer
+
+- Please obtain permission from your course staff before using this tool
+- This project is not affiliated with Edstem.org
