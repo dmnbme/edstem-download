@@ -64,7 +64,9 @@ def main() -> None:
     base_url = get_ed_host(cfg)
     token = get_token(cfg)
     image_mode = get_image_mode(cfg)
-    output_dir = get_output_dir(cfg)
+    # Keep all exports under a dedicated download directory
+    output_dir = get_output_dir(cfg) / "download"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     client = EdClient(token=token, base_url=base_url)
     export_course_lessons_to_markdown(client, output_dir, image_mode)
