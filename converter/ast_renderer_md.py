@@ -43,7 +43,7 @@ def _render_callout(
     type_map = {
         "error": "CAUTION",
         "warning": "WARNING",
-        "info": "INFO",
+        "info": "NOTE",
         "success": "TIP",
     }
     ctype = (node.attrs.get("type") or "").lower()
