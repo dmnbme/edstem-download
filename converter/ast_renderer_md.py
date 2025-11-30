@@ -31,6 +31,36 @@ def _render_children(
     return "".join(_render_node(child, image_resolver) for child in children)
 
 
+def _render_callout(
+    node: Node,
+    image_resolver: Callable[[str], str] | None,
+) -> str:
+    """
+    Render Ed callout to GitHub-flavored admonition syntax:
+    > [!TYPE]
+    > content
+    """
+    type_map = {
+        "error": "CAUTION",
+        "warning": "WARNING",
+        "info": "INFO",
+        "success": "TIP",
+    }
+    ctype = (node.attrs.get("type") or "").lower()
+    label = type_map.get(ctype, "INFO")
+
+    inner_html = _render_children(node.children, image_resolver).strip()
+    if not inner_html:
+        inner_html = ""
+
+    lines = inner_html.splitlines() if inner_html else [""]
+    md_block = "\n".join(
+        ["> [!" + label + "]"] + ["> " + line for line in lines]
+    )
+    md_block = "\n\n" + md_block + "\n\n"
+    return _register_raw_block(md_block, f"callout_{label.lower()}")
+
+
 def _render_web_snippet(
     node: Node,
     image_resolver: Callable[[str], str] | None,
@@ -173,6 +203,9 @@ def _render_node(
     if tag == "pre":
         inner = _render_children(node.children, image_resolver)
         return f"<pre><code>{inner}</code></pre>"
+
+    if tag == "callout":
+        return _render_callout(node, image_resolver)
 
     # Iframe (if present in raw XML)
     if tag == "iframe":
