@@ -232,19 +232,31 @@ class EdClient:
                         if basename:
                             raw_name = unquote(basename)
 
+                    filename = ""
                     if raw_name:
                         raw_name = safe_filename(raw_name)
-                        if not raw_name.lower().endswith(ext.lower()):
-                            raw_name = f"{raw_name}{ext}"
-                        base, suffix_ext = os.path.splitext(raw_name)
-                        candidate = raw_name
-                        dedup = 1
-                        while candidate in used_names:
-                            dedup += 1
-                            candidate = f"{base}_{dedup:03d}{suffix_ext or ext}"
+                        if raw_name.lower() in {"blob", "blob.bin", "file", "file.bin", "unknown"}:
+                            raw_name = ""
+                        base_no_ext, existing_ext = os.path.splitext(raw_name)
+                        if not base_no_ext.strip():
+                            raw_name = ""
+                        else:
+                            if not raw_name.lower().endswith(ext.lower()):
+                                raw_name = f"{raw_name}{ext}"
+                            base, suffix_ext = os.path.splitext(raw_name)
+                            candidate = raw_name
+                            dedup = 1
+                            while candidate in used_names or (assets_dir and (assets_dir / candidate).exists()):
+                                dedup += 1
+                                candidate = f"{base}_{dedup:03d}{suffix_ext or ext}"
+                            filename = candidate
+                    if not filename:
+                        counters[prefix] = counters.get(prefix, 0) + 1
+                        candidate = f"{prefix}{counters[prefix]:03d}{ext}"
+                        while candidate in used_names or (assets_dir and (assets_dir / candidate).exists()):
+                            counters[prefix] += 1
+                            candidate = f"{prefix}{counters[prefix]:03d}{ext}"
                         filename = candidate
-                    else:
-                        filename = f"{prefix}{counters[prefix]:03d}{ext}"
                     used_names.add(filename)
                     target = assets_dir / filename
                     if not target.parent.exists():

@@ -60,7 +60,7 @@ def export_course_lessons_to_markdown(
 
 
 def main() -> None:
-    cfg = load_config()  # 默认读取 ./config.toml
+    cfg = load_config()  # read ./config.toml
     base_url = get_ed_host(cfg)
     token = get_token(cfg)
     image_mode = get_image_mode(cfg)
