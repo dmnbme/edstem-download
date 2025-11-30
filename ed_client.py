@@ -379,3 +379,12 @@ class EdClient:
         states = rs2.json().get("states", rs2.json())
 
         return questions, responses, states
+
+    def fetch_challenge_detail(self, challenge_id: int) -> dict:
+        """
+        Fetch the full challenge payload for code slides.
+        """
+        url = f"{self.base_url}/challenges/{challenge_id}?view=1"
+        r = request("GET", url, headers=self._headers)
+        data = r.json()
+        return data.get("challenge", data)

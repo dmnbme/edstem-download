@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ed_client import EdClient, safe_filename
-from converters import edxml_to_markdown, shift_markdown_headings
+from converters import edxml_to_markdown
 
 
 def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) -> dict:
@@ -68,6 +68,34 @@ def fetch_lesson_content(client: EdClient, lesson: dict, image_resolver=None) ->
                     "file_url": slide_data.get("file_url"),
                 }
             )
+        elif stype == "code":
+            content_xml = slide_data.get("content") or ""
+            content_md = edxml_to_markdown(
+                content_xml,
+                image_resolver=image_resolver,
+            )
+            explanation_md = ""
+            challenge_id = slide_data.get("challenge_id")
+            if isinstance(challenge_id, int):
+                try:
+                    challenge = client.fetch_challenge_detail(challenge_id)
+                    explanation_xml = challenge.get("explanation") or ""
+                    if explanation_xml:
+                        explanation_md = edxml_to_markdown(
+                            explanation_xml,
+                            image_resolver=image_resolver,
+                        )
+                except Exception as e:
+                    print(f"Failed to fetch challenge {challenge_id}: {e}")
+
+            processed_slides.append(
+                {
+                    **base_info,
+                    "content_xml": content_xml,
+                    "content_md": content_md,
+                    "explanation_md": explanation_md,
+                }
+            )
         else:
             processed_slides.append(base_info)
 
@@ -118,7 +146,6 @@ def save_lesson_markdown(
         if stype == "document":
             body = slide.get("content_md") or ""
             if body:
-                body = shift_markdown_headings(body, offset=1)
                 parts.append(body)
         elif stype == "quiz":
             parts.append("_Quiz slide: questions/responses not converted to markdown yet._")
@@ -128,6 +155,15 @@ def save_lesson_markdown(
                 file_url = assets_resolver(file_url)
             label = Path(file_url).name if file_url else "PDF"
             parts.append(f"[{label}]({file_url})")
+        elif stype == "code":
+            body = slide.get("content_md") or ""
+            if body:
+                parts.append(body)
+            explanation_md = slide.get("explanation_md") or ""
+            if explanation_md:
+                solution_title = f"# {stitle} - Solution"
+                parts.append(solution_title)
+                parts.append(explanation_md)
         else:
             parts.append(f"_Slide of type `{stype}` not converted (code/pdf/etc)._")
 
