@@ -41,9 +41,7 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 
 2. Create an API token on Ed settings page
 
-3. Set the API token in `config.toml` or in environment variable `ED_PAT`
-
-4. Clone the repository and run from file
+3. Clone the repository and install dependencies
 
    ```shell
    # Clone the repository
@@ -52,8 +50,13 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
    
    # Install dependencies
    pip install -r requirements.txt
-   
-   # Run from file
+   ```
+
+4. Set the API token in `config.toml` or in environment variable `ED_PAT`
+
+5. Run the program
+
+   ```
    python main.py
    ```
 
