@@ -30,7 +30,7 @@ It preserves as much of the original slide content as possible, including admoni
 
 In short, everything from [here](https://edstem.org/help/content-editor) except Polls.
 
-^ You probably need to allow all content and script in your Markdown reader
+^ You probably need to allow all content and script in your Markdown reader.
 
 ## Prerequisites
 
