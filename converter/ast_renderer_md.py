@@ -409,12 +409,12 @@ def _post_process_markdown(md: str) -> str:
             label = m.group(1)
             url = m.group(2)
 
-            # 没有 HTML 的 label，直接原样返回，不转换
+            # no html tags involved
             if "<" not in label and ">" not in label:
                 return m.group(0)
 
             safe_url = html.escape(url, quote=True)
-            # label 里面可能有 <u> / ** 等，原样保留
+            # html tags involved
             return f'<a href="{safe_url}">{label}</a>'
 
         return re.sub(pattern, repl, text)
