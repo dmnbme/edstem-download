@@ -26,9 +26,11 @@ It preserves as much of the original slide content as possible, including admoni
 | Underlined text<br />Spoiler<br />Link with styles           | HTML                                                         |
 | Image                                                        | Base64-encoded in HTML<br />Files stored in separate folders |
 | Admonition                                                   | GItHub Flavored Markdown                                     |
-| Web snippet                                                  | iframe in HTML                                               |
+| Web snippet                                                  | iframe in HTML^                                              |
 
 In short, everything from [here](https://edstem.org/help/content-editor) except Polls.
+
+^ You probably need to allow all content and script in your Markdown reader
 
 ## Prerequisites
 
