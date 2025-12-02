@@ -81,4 +81,4 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 ## Disclaimer
 
 - Please obtain permission from your course staff before using this tool
-- This project is not affiliated with Edstem.org
+- This project is not affiliated with edstem.org
