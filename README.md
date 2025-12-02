@@ -65,14 +65,18 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 
 ## To-do
 
-- [ ] Lesson feedback comment
-- [ ] Workspace files download
-- [ ] Polls supported
-- [ ] Export to more formats ( rtf / pdf / ... )
-- [ ] Export to other platforms ( Notion / )
-- [ ] Parallel downloads
-- [ ] Resumable downloads
-- [ ] Better progress bar
+- Short-term
+  	- [ ] Polls supported
+	- [ ] Lesson feedback comment
+	- [ ] Workspace files download
+   - [ ] Downloaded files as a RAG knowledge base
+	
+- Long-term
+	- [ ] Export to more formats ( rtf / pdf / ... )
+	- [ ] Export to other platforms ( Notion / ... )
+	- [ ] Parallel downloads
+	- [ ] Resumable downloads
+	- [ ] Better progress bar
 
 ## Disclaimer
 
