@@ -39,7 +39,7 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 
 ## Usage
 
-1. Make sure you met all the prerequisites
+1. Make sure all the prerequisites are met
 
 2. Create an API token on Ed settings page
 
