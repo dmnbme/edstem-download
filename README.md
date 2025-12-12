@@ -45,22 +45,22 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 
 3. Clone the repository and install dependencies
 
-   ```shell
-   # Clone the repository
-   git clone https://github.com/dmnbme/edstem-download
-   cd edstem-download
-   
-   # Install dependencies
-   pip install -r requirements.txt
-   ```
+```shell
+# Clone the repository
+git clone https://github.com/dmnbme/edstem-download
+cd edstem-download
+
+# Install dependencies
+pip install -r requirements.txt
+```
 
 4. Set the API token in `config.toml` or in environment variable `ED_PAT`
 
 5. Run the program
 
-   ```
-   python main.py
-   ```
+```
+python main.py
+```
 
 
 ## To-do
