@@ -40,9 +40,7 @@ In short, everything from [here](https://edstem.org/help/content-editor) except 
 ## Usage
 
 1. Make sure all the prerequisites are met
-
 2. Create an API token on Ed settings page
-
 3. Clone the repository and install dependencies
 
 ```shell
@@ -55,7 +53,6 @@ pip install -r requirements.txt
 ```
 
 4. Set the API token in `config.toml` or in environment variable `ED_PAT`
-
 5. Run the program
 
 ```
